@@ -6,7 +6,7 @@
     "keywords": ["laravel", "framework"],
     "license": "MIT",
     "require": {
-        "php": "^8.2",
+        "php": "^8.4",
         "alexpechkarev/google-maps": "^12.1",
         "laravel/cashier": "^16.3",
         "laravel/framework": "^12.0",
