@@ -141,11 +141,18 @@ class Branch extends Model implements HasMedia
                 ?? $branch->getTranslation('branch_address', 'ar');
 
             if ($missingCoordinates && $address) {
-                $result = Geocoder::getCoordinatesForAddress($address);
+                try {
+                    $result = Geocoder::getCoordinatesForAddress($address);
 
-                if (isset($result['lat'], $result['lng']) && $result['lat'] !== 0) {
-                    $branch->latitude  = $result['lat'];
-                    $branch->longitude = $result['lng'];
+                    if (isset($result['lat'], $result['lng']) && $result['lat'] !== 0) {
+                        $branch->latitude  = $result['lat'];
+                        $branch->longitude = $result['lng'];
+                    }
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning("Geocoding failed for branch address: {$address}. Error: " . $e->getMessage());
+                    // Fallback to default Cairo coordinates if none exist, or keep them null
+                    $branch->latitude  = $branch->latitude ?? 30.0444;
+                    $branch->longitude = $branch->longitude ?? 31.2357;
                 }
             }
         });
@@ -166,11 +173,15 @@ class Branch extends Model implements HasMedia
             return $this;
         }
 
-        $result = Geocoder::getCoordinatesForAddress($address);
+        try {
+            $result = Geocoder::getCoordinatesForAddress($address);
 
-        if (isset($result['lat'], $result['lng']) && $result['lat'] !== 0) {
-            $this->latitude  = $result['lat'];
-            $this->longitude = $result['lng'];
+            if (isset($result['lat'], $result['lng']) && $result['lat'] !== 0) {
+                $this->latitude  = $result['lat'];
+                $this->longitude = $result['lng'];
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning("Geocoding failed during coordinate refresh for address: {$address}. Error: " . $e->getMessage());
         }
 
         return $this;

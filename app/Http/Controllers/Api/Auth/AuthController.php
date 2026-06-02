@@ -22,92 +22,44 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
- * AuthController
+ * المتحكم في المصادقة (AuthController)
  *
- * Handles authentication only:
- *   login      → all roles, unified endpoint
- *   register   → client self-registration only
- *   logout     → current device
- *   logout-all → all devices
- *   refresh    → rotate token
- *
- * Profile management (GET /me, PUT /me) → UserController
- * Notifications                         → NotificationController
- *
- * Role creation flow:
- *   super-admin    → AdminSeeder only (never public)
- *   pharmacy-owner → POST /api/v1/users by super-admin
- *   branch-manager → POST /api/v1/users by super-admin or pharmacy-owner
- *   client         → POST /api/v1/auth/register (public)
+ * يدير عمليات التحقق من الهوية بالكامل:
+ *   login      ← تسجيل الدخول الموحد لجميع الرتب والمستويات
+ *   register   ← التسجيل الذاتي للعملاء وأصحاب الصيدليات
+ *   logout     ← تسجيل الخروج للجهاز الحالي
+ *   logout-all ← تسجيل الخروج لجميع الأجهزة النشطة
+ *   refresh    ← تجديد التوكن لحفظ الجلسة
  */
 class AuthController extends Controller
 {
     // ──────────────────────────────────────────
-    // Public — no auth required
+    // مسارات عامة لا تحتاج لمصادقة
     // ──────────────────────────────────────────
 
     /**
-     * Unified login for ALL roles.
+     * تسجيل الدخول الموحد لكافة الرتب
      * POST /api/v1/auth/login
-     *
-     * Body: { email, password }
-     *
-     * Response:
-     *   token    → Sanctum plain-text token — store in mobile secure storage
-     *   user     → UserResource (role, is_* booleans, pharmacy, branch)
-     *   redirect → frontend routing hint per role
-     *
-     * Redirect values:
-     *   admin.dashboard    → super-admin
-     *   pharmacy.dashboard → pharmacy-owner
-     *   branch.dashboard   → branch-manager
-     *   client.home        → client
      */
-    // public function login(LoginRequest $request): JsonResponse
-    // {
-    //     $user = User::where('email', $request->email)->first();
-
-    //     if (!$user || !Hash::check($request->password, $user->password)) {
-    //         return response()->json([
-    //             'message' => __('auth.messages.invalid_credentials'),
-    //         ], 401);
-    //     }
-
-    //     // Single-session: revoke all previous tokens on fresh login
-    //     $user->tokens()->delete();
-
-    //     $role  = $user->getRoleNames()->first() ?? 'user';
-    //     $token = $user->createToken("{$role}-token")->plainTextToken;
-
-    //     $user->loadMissing(['pharmacy', 'branch']);
-
-    //     return response()->json([
-    //         'message'  => __('auth.messages.login_success'),
-    //         'token'    => $token,
-    //         'user'     => new UserResource($user),
-    //         'redirect' => $this->redirectFor($user),
-    //     ]);
-    // }
     public function login(LoginRequest $request): JsonResponse
     {
-        // 1. جلب البيانات الموثقة فقط
+        // 1. استرجاع البيانات التي تم التحقق من صحتها من طلب الدخول
         $validated = $request->validated();
 
-        // 2. التحقق من صحة البيانات واستخراج التوكن
+        // 2. التحقق من صحة بيانات الدخول وإصدار توكن JWT
         if (! $token = auth('api')->attempt($validated)) {
             return response()->json([
-                'message' => __('auth.messages.invalid_credentials'),
+                'message' => __('auth.messages.invalid_credentials'), // رسالة خطأ مترجمة
             ], 401);
         }
 
+        // 3. جلب بيانات المستخدم الموثق حالياً
         $user = auth('api')->user();
 
-        // 5. تحميل العلاقات المطلوبة للـ Resource
+        // 4. تحميل الكيانات التابعة للمستخدم لخدمة الـ Resource
         $user->loadMissing(['pharmacy', 'branch']);
 
-        // (اختياري) إطلاق حدث تسجيل الدخول إذا كنت تستمع إليه لتحديث "آخر ظهور" مثلاً
-        // event(new Login('sanctum', $user, false));
-
+        // 5. إعادة الاستجابة بنجاح العملية مع التوكن والبيانات وواجهة التوجيه المناسبة لرتبته
         return response()->json([
             'message'  => __('auth.messages.login_success'),
             'token'    => $token,
@@ -115,33 +67,27 @@ class AuthController extends Controller
             'redirect' => $this->redirectFor($user),
         ]);
     }
+
     /**
-     * Self-registration for clients AND pharmacy owners.
+     * التسجيل الموحد للعملاء أو أصحاب الصيدليات
      * POST /api/v1/auth/register
-     *
-     * Step 1 payload (both roles): name, email, password, password_confirmation, role
-     * Step 2 payload (pharmacy_owner only):
-     *   pharmacy_name_en, pharmacy_name_ar
-     *   has_branches (boolean)
-     *   city_id
-     *   branch_name_en, branch_name_ar, branch_address_en, branch_address_ar, branch_phone (when has_branches = true)
      */
     public function register(RegisterClientRequest $request): JsonResponse
     {
         $role = $request->input('role', 'client');
 
-        // ── Client registration (fast path) ──────────────────────────────
+        // ── حالة تسجيل العميل (سريع ولا يتطلب بيانات صيدلية) ──────────────────────────────
         if ($role === 'client') {
             $user = User::create([
                 'name'        => $request->name,
                 'email'       => $request->email,
-                'password'    => Hash::make($request->password),
+                'password'    => Hash::make($request->password), // تشفير كلمة المرور
                 'pharmacy_id' => null,
                 'branch_id'   => null,
             ]);
 
-            $user->assignRole('client');
-            $token = auth('api')->login($user);
+            $user->assignRole('client'); // إسناد صلاحية العميل عبر Spatie
+            $token = auth('api')->login($user); // تسجيل الدخول الفوري وتوليد التوكن
 
             return response()->json([
                 'message'  => __('auth.messages.register_success'),
@@ -151,11 +97,11 @@ class AuthController extends Controller
             ], 201);
         }
 
-        // ── Pharmacy Owner registration (with transaction) ────────────────
-        DB::beginTransaction();
+        // ── حالة تسجيل صاحب الصيدلية (يتطلب عمل معمليات متعددة متصلة) ────────────────
+        DB::beginTransaction(); // بدء معاملة قاعدة البيانات لضمان عدم إنشاء حساب مشوه عند فشل أي خطوة
 
         try {
-            // 1. Create user account (no pharmacy_id yet)
+            // 1. إنشاء حساب المستخدم
             $user = User::create([
                 'name'        => $request->name,
                 'email'       => $request->email,
@@ -164,7 +110,7 @@ class AuthController extends Controller
                 'branch_id'   => null,
             ]);
 
-            // 2. Create the pharmacy
+            // 2. إنشاء الصيدلية التابعة
             $pharmacy = Pharmacy::create([
                 'pharmacy_name' => [
                     'en' => $request->pharmacy_name_en,
@@ -172,14 +118,14 @@ class AuthController extends Controller
                 ],
             ]);
 
-            // 3. Link user to pharmacy
+            // 3. ربط حساب المستخدم بالصيدلية المنشأة
             $user->update(['pharmacy_id' => $pharmacy->id]);
 
-            // 4. Create first branch
+            // 4. إنشاء الفرع الأول التلقائي أو المخصص للصيدلية
             $hasBranches = filter_var($request->input('has_branches'), FILTER_VALIDATE_BOOLEAN);
 
             if ($hasBranches) {
-                // Owner specified branch details explicitly
+                // إذا حدد صاحب الصيدلية وجود فروع وقام بتعبئة بيانات الفرع
                 Branch::create([
                     'pharmacy_id'    => $pharmacy->id,
                     'city_id'        => (int) $request->city_id,
@@ -196,7 +142,7 @@ class AuthController extends Controller
                         : null,
                 ]);
             } else {
-                // Auto-create a main branch using the pharmacy name
+                // إنشاء فرع افتراضي تلقائياً باستخدام اسم الصيدلية الرئيسي لضمان وجود فرع
                 Branch::create([
                     'pharmacy_id'    => $pharmacy->id,
                     'city_id'        => (int) $request->city_id,
@@ -212,14 +158,14 @@ class AuthController extends Controller
                 ]);
             }
 
-            // 5. Assign pharmacy-owner role
+            // 5. إسناد دور مالك الصيدلية
             $user->assignRole('pharmacy-owner');
 
-            DB::commit();
+            DB::commit(); // اعتماد وإدخال البيانات في قاعدة البيانات بنجاح
 
         } catch (\Throwable $e) {
-            DB::rollBack();
-            Log::error('Pharmacy Owner Registration Failed: ' . $e->getMessage(), [
+            DB::rollBack(); // التراجع عن العمليات السابقة لإلغاء البيانات المشوهة
+            Log::error('فشل تسجيل صاحب صيدلية جديدة: ' . $e->getMessage(), [
                 'trace' => $e->getTraceAsString(),
             ]);
 
@@ -228,7 +174,7 @@ class AuthController extends Controller
             ], 500);
         }
 
-        // 6. Issue JWT token after successful creation
+        // 6. إصدار توكن JWT وتأكيد عملية التسجيل
         $user->loadMissing(['pharmacy', 'branch']);
         $token = auth('api')->login($user);
 
@@ -239,65 +185,18 @@ class AuthController extends Controller
             'redirect' => 'pharmacy.dashboard',
         ], 201);
     }
-    // public function register(RegisterClientRequest $request): JsonResponse
-    // {
-    //     // 1. جلب البيانات الموثقة فقط
-    //     $validated = $request->validated();
 
-    //     // 2. استخدام DB Transaction لضمان سلامة البيانات مع Spatie
-    //     DB::beginTransaction();
-
-    //     try {
-    //         $user = User::create([
-    //             'name'        => $validated['name'],
-    //             'email'       => $validated['email'],
-    //             'password'    => Hash::make($validated['password']),
-    //             'pharmacy_id' => null,
-    //             'branch_id'   => null,
-    //         ]);
-
-    //         // تعيين الدور عبر حزمة Spatie
-    //         $user->assignRole('client');
-
-    //         DB::commit();
-    //     } catch (\Exception $e) {
-    //         DB::rollBack();
-    //         Log::error('User Registration Failed: ' . $e->getMessage());
-
-    //         return response()->json([
-    //             'message' => __('auth.messages.register_failed') // يفضل إضافة هذه الترجمة
-    //         ], 500);
-    //     }
-
-    //     // 3. تأكيد التنبيهات / إرسال إيميل التفعيل التلقائي
-    //     // سيقوم هذا الحدث بإرسال إشعار Verification إذا كان المودل يطبق MustVerifyEmail
-    //     event(new Registered($user));
-
-    //     // 4. إصدار التوكن
-    //     $token = $user->createToken('client-token')->plainTextToken;
-
-    //     return response()->json([
-    //         'message'  => __('auth.messages.register_success'),
-    //         'token'    => $token,
-    //         'user'     => new UserResource($user),
-    //         'redirect' => 'client.home',
-    //     ], 201);
-    // }
- //!--------------------------------
     // ──────────────────────────────────────────
-    // Protected — requires auth:sanctum
+    // مسارات محمية تحتاج إلى تسجيل دخول وتمرير التوكن
     // ──────────────────────────────────────────
 
     /**
-     * Logout current device.
+     * تسجيل خروج من الجهاز الحالي
      * POST /api/v1/auth/logout
-     *
-     * Revokes only the token used in this request.
-     * Other devices remain logged in.
      */
     public function logout(Request $request): JsonResponse
     {
-        auth('api')->logout();
+        auth('api')->logout(); // إبطال التوكن الحالي المستخدم في الطلب
 
         return response()->json([
             'message' => __('auth.messages.logout_success'),
@@ -305,15 +204,12 @@ class AuthController extends Controller
     }
 
     /**
-     * Logout all devices.
+     * تسجيل خروج من كافة الأجهزة
      * POST /api/v1/auth/logout-all
-     *
-     * Revokes ALL tokens for this user.
-     * Use after password change or security incident.
      */
     public function logoutAll(Request $request): JsonResponse
     {
-        // For JWT, standard logout blacklists the current token.
+        // لتسجيل الخروج الكلي في JWT، نقوم بإبطال التوكن الحالي
         auth('api')->logout();
 
         return response()->json([
@@ -322,15 +218,12 @@ class AuthController extends Controller
     }
 
     /**
-     * Rotate token.
+     * تجديد توكن JWT (Token Rotation)
      * POST /api/v1/auth/refresh
-     *
-     * Revokes the current token and issues a fresh one.
-     * Call periodically to keep sessions alive securely.
      */
     public function refresh(Request $request): JsonResponse
     {
-        $token = auth('api')->refresh();
+        $token = auth('api')->refresh(); // توليد توكن جديد وإبطال القديم لحفظ أمان الجلسة
 
         return response()->json([
             'message' => __('auth.messages.token_refreshed'),

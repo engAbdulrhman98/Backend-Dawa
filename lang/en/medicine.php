@@ -11,11 +11,14 @@ return [
 
     // ── Success messages ──────────────────────────────────────────────────
     'messages' => [
-        'created'      => 'Medicine created successfully.',
-        'updated'      => 'Medicine updated successfully.',
-        'deleted'      => 'Medicine deleted successfully.',
-        'not_found'    => 'Medicine not found.',
-        'unauthorized' => 'You are not authorized to perform this action.',
+        'created'                  => 'Medicine created successfully.',
+        'updated'                  => 'Medicine updated successfully.',
+        'deleted'                  => 'Medicine deleted successfully.',
+        'not_found'                => 'Medicine not found.',
+        'unauthorized'             => 'You are not authorized to perform this action.',
+        'imported_successfully'    => 'Medicines imported successfully.',
+        'import_validation_failed' => 'Some rows in the Excel file failed validation.',
+        'import_failed'            => 'Failed to import Excel file.',
     ],
 
     // ── Validation messages ───────────────────────────────────────────────
