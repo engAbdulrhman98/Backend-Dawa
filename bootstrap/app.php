@@ -21,7 +21,7 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->api(prepend: [
-            // Removed Sanctum
+            \Illuminate\Http\Middleware\HandleCors::class, // تفعيل سياسة CORS للسماح بطلبات GitHub Pages
         ]);
         $middleware->alias([
             'auth:api' => \Tymon\JWTAuth\Http\Middleware\Authenticate::class,
